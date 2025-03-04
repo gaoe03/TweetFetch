@@ -127,28 +127,53 @@ async def compile(ctx, *args):
         return
 
     total_results = sum(len(tweet["media"]) for tweet in filtered_tweets)
-    await ctx.send(f"Found **{total_results}** media results. Do you want to continue? (Y/N)")
+    await ctx.send(
+        f"Found **{total_results}** media results. Choose an option:\n"
+        "-# 1. **Slideshow**\n"
+        "-# 2. **All at once**\n"
+        "-# 3. **Exit**"
+    )
 
     def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ["y", "n"]
+        return m.author == ctx.author and m.channel == ctx.channel and m.content in ["1", "2", "3"]
 
     try:
         msg = await bot.wait_for("message", timeout=30.0, check=check)
-        if msg.content.lower() == "n":
+        choice = msg.content
+
+        if choice == "3":
             abort_flag[ctx.author.id] = True
             await ctx.send("Cancelled.")
             return
+        elif choice not in ["1", "2"]:
+            await ctx.send("Invalid option. Please respond with `1`, `2`, or `3`.")
+            msg = await bot.wait_for("message", timeout=15.0, check=check)
+            if msg.content not in ["1", "2"]:
+                await ctx.send("Invalid response again. Cancelling.")
+                return
+            choice = msg.content  
     except asyncio.TimeoutError:
         await ctx.send("Timed out. Try again.")
         return
 
+    if choice == "1":
+        await send_slideshow(ctx, filtered_tweets)
+    elif choice == "2":
+        await send_all(ctx, filtered_tweets)
+
+async def send_all(ctx, filtered_tweets):
+    """Sends all media results at once."""
     for tweet in filtered_tweets:
-        username_time = f"{tweet['username']}"  # Used for markdown links
+        if abort_flag[ctx.author.id]:
+            await ctx.send("Processing stopped.")
+            return
+
+        username_time = f"{tweet['username']}"  
 
         videos = [url for url in tweet["media"] if url.endswith('.mp4')]
         images = [url for url in tweet["media"] if not url.endswith('.mp4')]
 
-        # Send video links separately using markdown format
+        # Send video links separately
         if videos:
             for index, video_url in enumerate(videos, start=1):
                 if len(videos) > 1:
@@ -161,7 +186,7 @@ async def compile(ctx, *args):
             video_embed.set_footer(text=username_time)
             await ctx.send(embed=video_embed)
 
-        # Send images normally
+        # Send images
         for index, media_url in enumerate(images, start=1):
             if abort_flag[ctx.author.id]:
                 await ctx.send("Processing stopped.")
@@ -176,11 +201,54 @@ async def compile(ctx, *args):
                 embed.set_footer(text=f"{tweet['username']}")
 
             await ctx.send(embed=embed)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.5)  # Prevent rate limit issues
 
     await ctx.send("Finished sending all media! ✅")
 
 
+async def send_slideshow(ctx, filtered_tweets):
+    """Displays tweets in a slideshow format with reaction navigation."""
+    current_index = 0
+    tweet_count = len(filtered_tweets)
+
+    def generate_embed(index):
+        tweet = filtered_tweets[index]
+        username_time = f"{tweet['username']}"
+
+        embed = discord.Embed(color=discord.Color.blue())
+        if tweet["media"]:
+            embed.set_image(url=tweet["media"][0])
+        embed.set_footer(text=f"{username_time} ({index + 1}/{tweet_count})")
+
+        return embed
+
+    msg = await ctx.send(embed=generate_embed(current_index))
+    await msg.add_reaction("⏪")  # First page
+    await msg.add_reaction("⬅️")  # Previous page
+    await msg.add_reaction("➡️")  # Next page
+    await msg.add_reaction("⏩")  # Last page
+
+    def check_reaction(reaction, user):
+        return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
+
+    while True:
+        try:
+            reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check_reaction)
+
+            if str(reaction.emoji) == "➡️" and current_index < tweet_count - 1:
+                current_index += 1
+            elif str(reaction.emoji) == "⬅️" and current_index > 0:
+                current_index -= 1
+            elif str(reaction.emoji) == "⏪":
+                current_index = 0  # First page
+            elif str(reaction.emoji) == "⏩":
+                current_index = tweet_count - 1  # Last page
+
+            await msg.edit(embed=generate_embed(current_index))
+            await msg.remove_reaction(reaction.emoji, user)
+
+        except asyncio.TimeoutError:
+            break  # Auto-exit after 60 sec of no interaction
 
 @bot.command()
 async def richcompile(ctx, *args):
@@ -194,21 +262,42 @@ async def richcompile(ctx, *args):
         await ctx.send("No matching tweets found.")
         return
 
-    await ctx.send(f"Found **{len(filtered_tweets)}** tweets. Do you want to continue? (Y/N)")
+    await ctx.send(
+        f"Found **{len(filtered_tweets)}** tweets. Choose an option:\n"
+        "-# 1. **Slideshow**\n"
+        "-# 2. **All at once**\n"
+        "-# 3. **Exit**"
+    )
 
     def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() in ["y", "n"]
+        return m.author == ctx.author and m.channel == ctx.channel and m.content in ["1", "2", "3"]
 
     try:
         msg = await bot.wait_for("message", timeout=30.0, check=check)
-        if msg.content.lower() == "n":
+        choice = msg.content
+
+        if choice == "3":
             abort_flag[ctx.author.id] = True
             await ctx.send("Cancelled.")
             return
+        elif choice not in ["1", "2"]:
+            await ctx.send("Invalid option. Please respond with `1`, `2`, or `3`.")
+            msg = await bot.wait_for("message", timeout=15.0, check=check)
+            if msg.content not in ["1", "2"]:
+                await ctx.send("Invalid response again. Cancelling.")
+                return
+            choice = msg.content  
     except asyncio.TimeoutError:
         await ctx.send("Timed out. Try again.")
         return
 
+    if choice == "1":
+        await send_rich_slideshow(ctx, filtered_tweets)
+    elif choice == "2":
+        await send_rich_all(ctx, filtered_tweets)
+
+async def send_rich_all(ctx, filtered_tweets):
+    """Displays all tweets with full details at once."""
     for tweet in filtered_tweets:
         if abort_flag[ctx.author.id]:
             await ctx.send("Processing stopped.")
@@ -219,16 +308,17 @@ async def richcompile(ctx, *args):
             formatted_timestamp = timestamp_dt.strftime("%m/%d/%Y %I:%M %p").replace(" 0", " ")
             username_time = f"{tweet['username']} {formatted_timestamp}"
 
+            # Tweet Embed
             embed = discord.Embed(description=tweet["text"], color=discord.Color.blue())
             embed.set_author(name=tweet["username"], url=f"https://twitter.com/{tweet['username']}/status/{tweet['tweet_id']}")
             embed.set_footer(text=username_time)
 
-            if len(tweet["media"]) == 1:  # One image, embed inside the tweet
+            if len(tweet["media"]) == 1:  # One image, embed inside tweet
                 embed.set_image(url=tweet["media"][0])
 
             await ctx.send(embed=embed)
 
-            # Handle multiple images
+            # Multiple images (if any)
             if len(tweet["media"]) > 1:
                 for index, media_url in enumerate(tweet["media"], start=1):
                     media_embed = discord.Embed(color=discord.Color.blue())
@@ -237,7 +327,7 @@ async def richcompile(ctx, *args):
                     await ctx.send(embed=media_embed)
                     await asyncio.sleep(0.5)
 
-            # Handle videos separately
+            # Videos
             videos = [url for url in tweet["media"] if url.endswith('.mp4')]
             if videos:
                 for index, video_url in enumerate(videos, start=1):
@@ -252,6 +342,55 @@ async def richcompile(ctx, *args):
             print(f"Error processing tweet: {e}")
 
     await ctx.send("Finished sending all tweets! ✅")
+
+async def send_rich_slideshow(ctx, filtered_tweets):
+    """Displays tweets in a rich slideshow format with reaction navigation."""
+    current_index = 0
+    tweet_count = len(filtered_tweets)
+
+    def generate_embed(index):
+        tweet = filtered_tweets[index]
+        timestamp_dt = datetime.datetime.strptime(tweet["created_at"], "%a %b %d %H:%M:%S %z %Y")
+        formatted_timestamp = timestamp_dt.strftime("%m/%d/%Y %I:%M %p").replace(" 0", " ")
+        username_time = f"{tweet['username']} {formatted_timestamp}"
+
+        embed = discord.Embed(description=tweet["text"], color=discord.Color.blue())
+        embed.set_author(name=tweet["username"], url=f"https://twitter.com/{tweet['username']}/status/{tweet['tweet_id']}")
+        embed.set_footer(text=f"{username_time} ({index + 1}/{tweet_count})")
+
+        if tweet["media"]:
+            embed.set_image(url=tweet["media"][0])  # First image/video in slideshow
+
+        return embed
+
+    msg = await ctx.send(embed=generate_embed(current_index))
+    await msg.add_reaction("⏪")  # First page
+    await msg.add_reaction("⬅️")  # Previous page
+    await msg.add_reaction("➡️")  # Next page
+    await msg.add_reaction("⏩")  # Last page
+
+    def check_reaction(reaction, user):
+        return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
+
+    while True:
+        try:
+            reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check_reaction)
+
+            if str(reaction.emoji) == "➡️" and current_index < tweet_count - 1:
+                current_index += 1
+            elif str(reaction.emoji) == "⬅️" and current_index > 0:
+                current_index -= 1
+            elif str(reaction.emoji) == "⏪":
+                current_index = 0  # First page
+            elif str(reaction.emoji) == "⏩":
+                current_index = tweet_count - 1  # Last page
+
+            await msg.edit(embed=generate_embed(current_index))
+            await msg.remove_reaction(reaction.emoji, user)
+
+        except asyncio.TimeoutError:
+            break  # Auto-exit after 60 sec of no interaction
+
 
 @bot.command()
 async def stats(ctx, *args):
@@ -269,7 +408,7 @@ async def stats(ctx, *args):
 
     # Most liked users
     user_counts = collections.Counter(tweet["user_handle"] for tweet in tweets)
-    top_users = user_counts.most_common(10)
+    top_users = user_counts.most_common()
 
     # Longest Tweet Liked
     longest_tweet = max(tweets, key=lambda t: len(t["tweet_text"]), default=None)
@@ -279,9 +418,58 @@ async def stats(ctx, *args):
         stat_type = args[0].lower()
 
         if stat_type == "top_users":
-            # Same format as "Most Liked Users" from .stats, but as plain text
-            user_list = "\n".join([f"[{user}](<https://twitter.com/{user}>) ({count})" for user, count in top_users])
-            await ctx.send(f"🏆 **Top 10 Most Liked Users**\n{user_list}")
+            if not top_users:
+                await ctx.send("No liked users found.")
+                return
+
+            per_page = 10  # Users per page
+            total_pages = (len(top_users) - 1) // per_page + 1
+            current_page = 0
+
+            def generate_embed(page):
+                """Generates the embed for the given page number."""
+                start_idx = page * per_page
+                end_idx = start_idx + per_page
+                page_users = top_users[start_idx:end_idx]
+
+                embed = discord.Embed(title="🏆 Top 10 Most Liked Users", color=discord.Color.blue())
+                for user, count in page_users:
+                    embed.add_field(name=f"``{user}``", value=f"{count} liked tweets", inline=False)
+
+                embed.set_footer(text=f"Page {page + 1}/{total_pages}")
+                return embed
+
+            # Send initial embed
+            msg = await ctx.send(embed=generate_embed(current_page))
+
+            # Add reaction buttons for pagination
+            await msg.add_reaction("⏪")  # First page
+            await msg.add_reaction("⬅️")  # Previous page
+            await msg.add_reaction("➡️")  # Next page
+            await msg.add_reaction("⏩")  # Last page
+
+            def check_reaction(reaction, user):
+                return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
+
+            while True:
+                try:
+                    reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check_reaction)
+
+                    if str(reaction.emoji) == "➡️" and current_page < total_pages - 1:
+                        current_page += 1
+                    elif str(reaction.emoji) == "⬅️" and current_page > 0:
+                        current_page -= 1
+                    elif str(reaction.emoji) == "⏪":
+                        current_page = 0  # First page
+                    elif str(reaction.emoji) == "⏩":
+                        current_page = total_pages - 1  # Last page
+
+                    await msg.edit(embed=generate_embed(current_page))
+                    await msg.remove_reaction(reaction.emoji, user)  # Remove reaction after use
+
+                except asyncio.TimeoutError:
+                    break  # Exit loop after timeout
+
             return
 
         elif stat_type == "media":
@@ -310,10 +498,120 @@ async def stats(ctx, *args):
     embed.add_field(name="🎥 Videos", value=f"{total_videos}", inline=True)
 
     # Top Users (embedded in .stats)
-    top_users_text = "\n".join([f"[{user}](<https://twitter.com/{user}>) ({count})" for user, count in top_users])
+    top_users_text = "\n".join([f"``{user}`` ({count})" for user, count in top_users[:10]])
     embed.add_field(name="🏆 Most Liked Users", value=top_users_text, inline=False)
 
     await ctx.send(embed=embed)
 
+
+game_in_progress = {}
+@bot.command()
+async def game(ctx):
+    """Starts a game where users guess the Tweeter from a random liked tweet image."""
+    if game_in_progress.get(ctx.channel.id, False):
+        await ctx.send("⚠ **Game already in progress!** Please wait for it to finish.")
+        return
+
+    game_in_progress[ctx.channel.id] = True
+
+    tweets = load_tweets()
+    if not tweets:
+        await ctx.send("No data available.")
+        game_in_progress[ctx.channel.id] = False
+        return
+
+    # Choose a random tweet with media
+    valid_tweets = [tweet for tweet in tweets if tweet["tweet_media_urls"]]
+    if not valid_tweets:
+        await ctx.send("No media found in liked tweets.")
+        game_in_progress[ctx.channel.id] = False
+        return
+
+    tweet = random.choice(valid_tweets)
+    username = tweet["user_handle"]
+    image_url = random.choice(tweet["tweet_media_urls"])
+    game_starter = ctx.author
+
+    # Send the tweet image (No username, No timestamp)
+    embed = discord.Embed(title="Guess the Tweeter!", description="Who posted this image?")
+    embed.set_image(url=image_url)
+    msg = await ctx.send(embed=embed)
+
+    # Add the shrug emoji reaction
+    shrug_emoji = "🤷"
+    await msg.add_reaction(shrug_emoji)
+
+    correct_answer = username.lower()
+    hint_1_given = False
+    hint_2_given = False
+
+    def check(msg):
+        return msg.author == ctx.author and msg.channel == ctx.channel
+
+    def reaction_check(reaction, user):
+        return user == game_starter and str(reaction.emoji) == shrug_emoji and reaction.message.id == msg.id
+
+    try:
+        # Create tasks for hints and timeout
+        hint_1_task = asyncio.create_task(asyncio.sleep(15))  # First hint at 15 sec
+        hint_2_task = asyncio.create_task(asyncio.sleep(24))  # Second hint at 24 sec
+        timeout_task = asyncio.create_task(asyncio.sleep(30))  # Timeout at 30 sec
+        message_task = asyncio.create_task(bot.wait_for("message", check=check))
+        reaction_task = asyncio.create_task(bot.wait_for("reaction_add", check=reaction_check))
+
+        while True:
+            done, pending = await asyncio.wait(
+                [message_task, hint_1_task, hint_2_task, timeout_task, reaction_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+
+            if reaction_task in done:
+                await ctx.send(f"🤷 **Game ended!** The correct answer was **{username}**.\n-# Type `.game` to play again!")
+                game_in_progress[ctx.channel.id] = False
+                return
+
+            if hint_1_task in done and not hint_1_given:
+                hint_1_given = True
+                hint_type = random.choice(["partial", "like_count"])
+
+                if hint_type == "partial":
+                    revealed = list(username)
+                    for i in range(1, len(revealed) - 1):
+                        if random.random() > 0.5:
+                            revealed[i] = "_"
+                    hint = "".join(revealed)
+                    await ctx.send(f"**Hint:** ``{hint}``")  # Uses backticks to prevent markdown issues
+                else:
+                    like_count = sum(1 for t in tweets if t["user_handle"] == username)
+                    await ctx.send(f"**Hint:** You have liked this Tweeter **{like_count} times**.")
+                continue  # Keep waiting for a guess
+
+
+            if hint_2_task in done and not hint_2_given:
+                hint_2_given = True
+                await ctx.send(f"**Hint:** The username starts with **{username[0].upper()}** and ends with **{username[-1].upper()}**!")
+                continue  # Keep waiting for a guess
+
+            if timeout_task in done:
+                await ctx.send(f"⏳ **Time's up!** The correct answer was **{username}**.\n-# Type `.game` to play again!")
+                game_in_progress[ctx.channel.id] = False
+                return
+
+            if message_task in done:
+                guess_msg = message_task.result()
+                guess = guess_msg.content.lower()
+
+                if guess == correct_answer:
+                    await ctx.send(f"✅ **Correct!** The Tweeter was **{username}**! 🎉\n-# Type `.game` to play again!")
+                    game_in_progress[ctx.channel.id] = False
+                    return  # Stop the game if the guess is correct
+
+                # Reset the message task to wait for another guess
+                message_task = asyncio.create_task(bot.wait_for("message", check=check))
+
+    except asyncio.TimeoutError:
+        await ctx.send(f"⏳ **Time's up!** The correct answer was **{username}**.\n -# Type `.game` to play again!")
+    finally:
+        game_in_progress[ctx.channel.id] = False  # Ensure game flag is reset if anything goes wrong
 
 bot.run(TOKEN)
