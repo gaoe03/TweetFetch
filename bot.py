@@ -4,6 +4,8 @@ import asyncio
 import datetime
 import calendar
 import urllib.parse
+import collections
+import random
 from discord.ext import commands
 
 # Load config
@@ -97,6 +99,16 @@ def filter_tweets(username=None, year=None, month=None, day=None):
     return filtered_tweets
 
 @bot.command()
+async def stop(ctx):
+    """Allows the user to manually stop ongoing processes like .compile and .game."""
+    if ctx.author.id in abort_flag:
+        abort_flag[ctx.author.id] = True
+        await ctx.send("⛔ **Process aborted.**")
+    else:
+        await ctx.send("⚠ No active process to stop.")
+
+
+@bot.command()
 async def ping(ctx):
     """Responds with Pong! and the bot's latency."""
     latency = round(bot.latency * 1000)  # Convert to milliseconds
@@ -131,10 +143,6 @@ async def compile(ctx, *args):
         return
 
     for tweet in filtered_tweets:
-        if abort_flag[ctx.author.id]:
-            await ctx.send("Processing stopped.")
-            return
-
         username_time = f"{tweet['username']}"  # Used for markdown links
 
         videos = [url for url in tweet["media"] if url.endswith('.mp4')]
@@ -244,6 +252,68 @@ async def richcompile(ctx, *args):
             print(f"Error processing tweet: {e}")
 
     await ctx.send("Finished sending all tweets! ✅")
+
+@bot.command()
+async def stats(ctx, *args):
+    """Fetches statistics from liked tweets and displays them in an embed."""
+    tweets = load_tweets()
+    if not tweets:
+        await ctx.send("No data available.")
+        return
+
+    # Count total tweets & media
+    total_tweets = len(tweets)
+    total_images = sum(1 for tweet in tweets for media in tweet["tweet_media_urls"] if media.endswith(('.jpg', '.png', '.jpeg')))
+    total_videos = sum(1 for tweet in tweets for media in tweet["tweet_media_urls"] if media.endswith('.mp4'))
+    total_media = total_images + total_videos
+
+    # Most liked users
+    user_counts = collections.Counter(tweet["user_handle"] for tweet in tweets)
+    top_users = user_counts.most_common(10)
+
+    # Longest Tweet Liked
+    longest_tweet = max(tweets, key=lambda t: len(t["tweet_text"]), default=None)
+
+    # If a specific stat is requested
+    if args:
+        stat_type = args[0].lower()
+
+        if stat_type == "top_users":
+            # Same format as "Most Liked Users" from .stats, but as plain text
+            user_list = "\n".join([f"[{user}](<https://twitter.com/{user}>) ({count})" for user, count in top_users])
+            await ctx.send(f"🏆 **Top 10 Most Liked Users**\n{user_list}")
+            return
+
+        elif stat_type == "media":
+            embed = discord.Embed(title="📊 Media Breakdown", color=discord.Color.blue())
+            embed.add_field(name="📸 Images", value=f"{total_images}", inline=True)
+            embed.add_field(name="🎥 Videos", value=f"{total_videos}", inline=True)
+            await ctx.send(embed=embed)
+            return
+
+        elif stat_type == "longest":
+            embed = discord.Embed(title="📜 Longest Tweet Liked", description=longest_tweet["tweet_text"], color=discord.Color.blue())
+            embed.set_author(name=longest_tweet["user_handle"], url=f"https://twitter.com/{longest_tweet['user_handle']}/status/{longest_tweet['tweet_id']}")
+            embed.set_footer(text=f"Length: {len(longest_tweet['tweet_text'])} characters")
+            await ctx.send(embed=embed)
+            return
+
+        else:
+            await ctx.send("Invalid stats type. Available: `top_users`, `media`, `longest`")
+            return
+
+    # Full stats embed
+    embed = discord.Embed(title="📊 Tweet Stats", color=discord.Color.blue())
+    embed.add_field(name="📝 Total Tweets", value=f"{total_tweets}", inline=True)
+    embed.add_field(name="📸 Total Media", value=f"{total_media}", inline=True)
+    embed.add_field(name="📸 Images", value=f"{total_images}", inline=True)
+    embed.add_field(name="🎥 Videos", value=f"{total_videos}", inline=True)
+
+    # Top Users (embedded in .stats)
+    top_users_text = "\n".join([f"[{user}](<https://twitter.com/{user}>) ({count})" for user, count in top_users])
+    embed.add_field(name="🏆 Most Liked Users", value=top_users_text, inline=False)
+
+    await ctx.send(embed=embed)
 
 
 bot.run(TOKEN)
