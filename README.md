@@ -1,7 +1,7 @@
 # Twitter Media Fetch Bot
 
 ## Overview
-Twitter Media Fetch Bot is a **Discord bot** that allows users to retrieve and display **liked tweets with media** from a local JSON file. The bot supports **filtering by username, date, and keywords**, and it properly embeds **JPG, PNG, and MP4 files**.
+Twitter Media Fetch Bot is a **Discord bot** that allows users to retrieve and display **liked tweets with media** from a local JSON file. The bot supports **filtering by username, date, and keywords**, and it properly embeds **JPG, PNG, and MP4 files**. Additionally, it features a **game mode**, **slideshow navigation**, and **detailed stats tracking**.
 
 ---
 
@@ -44,10 +44,15 @@ If no parameters are provided, it fetches all liked tweets with media.
 ```
 > Returns **tweets liked from username on January 5, 2024**.
 
+**Display Options:**
+- **1. Slideshow** (react with ⬅️➡️ to navigate)
+- **2. All at once**
+- **3. Exit**
+
 ---
 
 ### `.richcompile [username] [year] [month] [day]`
-**Retrieve full tweets with media.**  
+**Retrieve full tweets with media and text.**  
 Includes **tweet text, timestamp, and media** in an organized format.
 
 **Syntax Examples:**  
@@ -56,34 +61,45 @@ Includes **tweet text, timestamp, and media** in an organized format.
 ```
 > Returns **all liked tweets with full details**.
 
+```
+.richcompile username 2025
+```
+> Returns **all liked tweets from username in 2025**.
+
+**Display Options:**
+- **1. Slideshow** (react with ⬅️➡️ to navigate)
+- **2. All at once**
+- **3. Exit**
+
 ---
 
 ### `.stop`
-**Stops any ongoing `.compile` or `.richcompile` command.**  
+**Stops any ongoing `.compile`, `.richcompile`, or `.game` command.**  
+```
+.stop
+```
+---
+
+### `.stats [category]`
+**View statistics about liked tweets.**
+
+**Categories:**
+- `.stats` → **General stats** (total tweets, media breakdown, most liked users)
+- `.stats top_users` → **Paginated list of most liked users** (react with ⬅️➡️ to navigate)
+- `.stats media` → **Breakdown of images & videos**
+- `.stats longest` → **Longest liked tweet**
 
 ---
 
-## **Installation & Setup**
-### **1. Clone the Repository**
+### `.game`
+**Guess the Tweeter from a liked tweet image.**  
+- The bot sends a random image from liked tweets.
+- **User has 30 seconds to guess the username.**
+- **Hints given at 15s & 24s** (partial username or like count).
+- **Reacting with 🤷 stops the game and reveals the answer.**
+
 ```
-git clone https://github.com/YOUR-USERNAME/YOUR-REPO.git
-cd YOUR-REPO
+.game
 ```
 
-### **2. Install Dependencies**
-Ensure you have Python installed, then run:
-```
-pip install discord.py
-```
-
-### **3. Configure the Bot**
-1. **Create a `config.json` file** (this is ignored by Git).
-2. **Copy `configtemplate.json`** and rename it to `config.json`.
-3. **Edit `config.json`** and add your bot token:
-
-
-### **4. Run the Bot**
-```
-python bot.py
-```
 ---
