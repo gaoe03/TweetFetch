@@ -25,6 +25,8 @@ abort_flag = {}
 MONTH_MAP = {m.lower(): str(i).zfill(2) for i, m in enumerate(calendar.month_name) if m}
 MONTH_ABBR_MAP = {m.lower(): str(i).zfill(2) for i, m in enumerate(calendar.month_abbr) if m}
 
+user_media_preferences = {}  # Stores user preferences (jpg, mp4, etc)
+
 def load_tweets():
     """Load tweets from JSON file."""
     try:
@@ -62,16 +64,25 @@ def parse_date_filters(args):
     username = " ".join(remaining_args) if remaining_args else None
     return username, year, month, day
 
-def filter_tweets(username=None, year=None, month=None, day=None):
-    """Filter tweets based on username and/or date (year, month, day)."""
+def filter_tweets(ctx, username=None, year=None, month=None, day=None):
+    """Filter tweets based on username and/or date (year, month, day), respecting user media preferences."""
     tweets = load_tweets()
     filtered_tweets = []
+
+    # Get user preference (default to "all")
+    user_preference = user_media_preferences.get(ctx.author.id, "all")
 
     for tweet in tweets:
         tweet_time = tweet.get("tweet_created_at", "")
         tweet_username = tweet.get("user_handle", "")
         tweet_text = tweet.get("tweet_text", "")
-        media = [clean_media_url(url) for url in tweet.get("tweet_media_urls", [])]  # Clean URLs
+
+        # Filter media based on user preference
+        if user_preference != "all":
+            media = [clean_media_url(url) for url in tweet.get("tweet_media_urls", []) if url.lower().startswith("https") and url.lower().split("?")[0].endswith(user_preference)]
+        else:
+            media = [clean_media_url(url) for url in tweet.get("tweet_media_urls", [])]
+
         tweet_id = tweet.get("tweet_id", "")
 
         try:
@@ -98,6 +109,20 @@ def filter_tweets(username=None, year=None, month=None, day=None):
 
     return filtered_tweets
 
+
+@bot.command()
+async def set(ctx, media_type: str = None):
+    """Sets the media type preference for .compile and .richcompile."""
+    valid_types = ["all", "mp4", "jpg", "png"]
+    
+    if not media_type or media_type.lower() not in valid_types:
+        await ctx.send("Invalid media type. Choose from: `all`, `mp4`, `jpg`, `png`.")
+        return
+
+    user_media_preferences[ctx.author.id] = media_type.lower()
+    await ctx.send(f"✅ **Preference set!** Now only fetching `{media_type.upper()}` files for `.compile` and `.richcompile`.")
+
+
 @bot.command()
 async def stop(ctx):
     """Allows the user to manually stop ongoing processes like .compile and .game."""
@@ -120,7 +145,7 @@ async def compile(ctx, *args):
     abort_flag[ctx.author.id] = False
 
     username, year, month, day = parse_date_filters(args)
-    filtered_tweets = filter_tweets(username, year, month, day)
+    filtered_tweets = filter_tweets(ctx, username, year, month, day)
 
     if not filtered_tweets:
         await ctx.send("No matching media found.")
@@ -256,7 +281,7 @@ async def richcompile(ctx, *args):
     abort_flag[ctx.author.id] = False  
 
     username, year, month, day = parse_date_filters(args)
-    filtered_tweets = filter_tweets(username, year, month, day)
+    filtered_tweets = filter_tweets(ctx, username, year, month, day)
 
     if not filtered_tweets:
         await ctx.send("No matching tweets found.")
