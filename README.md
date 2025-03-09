@@ -1,7 +1,6 @@
-# Twitter Media Fetch Bot
-
+# TweetFetch
 ## Overview
-Twitter Media Fetch Bot is a **Discord bot** that allows users to retrieve and display **liked tweets with media** from a local JSON file. The bot supports **filtering by username, date, and keywords**, and it properly embeds **JPG, PNG, and MP4 files**. Additionally, it features a **game mode**, **slideshow navigation**, and **detailed stats tracking**.
+TwitterFetch is a **Discord bot** that allows users to retrieve and display **liked tweets with media** from a local JSON file. The bot supports **filtering by username, date, and keywords**, and it properly embeds **JPG, PNG, and MP4 files**. Additionally, it features a **game mode**, **slideshow navigation**, and **detailed stats tracking**.
 
 ---
 
