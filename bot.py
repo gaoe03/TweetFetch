@@ -17,7 +17,7 @@ JSON_FILE = config["JSON_FILE"]
 
 # Set up bot
 intents = discord.Intents.default()
-intents.message_content = True  # Enables message content intent
+intents.message_content = True  
 bot = commands.Bot(command_prefix=".", intents=intents)
 
 abort_flag = {}
@@ -48,18 +48,23 @@ def parse_date_filters(args):
     remaining_args = []
 
     for arg in args:
-        if arg.isdigit() and len(arg) == 4:  # Year (e.g., 2025)
+        arg_lower = arg.lower()
+        if arg.isdigit() and len(arg) == 4: 
             year = arg
-        elif arg.isdigit() and 1 <= int(arg) <= 12:  # Month (numeric)
-            month = str(arg).zfill(2)
-        elif arg.lower() in MONTH_MAP:  # Month (full name)
-            month = MONTH_MAP[arg.lower()]
-        elif arg.lower() in MONTH_ABBR_MAP:  # Month (abbreviation)
-            month = MONTH_ABBR_MAP[arg.lower()]
-        elif arg.isdigit() and 1 <= int(arg) <= 31:  # Day
-            day = str(arg).zfill(2)
+        elif arg_lower in MONTH_MAP:
+            month = MONTH_MAP[arg_lower]
+        elif arg_lower in MONTH_ABBR_MAP:
+            month = MONTH_ABBR_MAP[arg_lower]
+        elif arg.isdigit():
+            num = int(arg)
+            if 1 <= num <= 12 and month is None:
+                month = str(num).zfill(2)
+            elif 1 <= num <= 31:  
+                day = str(num).zfill(2)
+            else:
+                remaining_args.append(arg)
         else:
-            remaining_args.append(arg)  # Keep non-date arguments (likely username)
+            remaining_args.append(arg)  
 
     username = " ".join(remaining_args) if remaining_args else None
     return username, year, month, day
@@ -69,7 +74,6 @@ def filter_tweets(ctx, username=None, year=None, month=None, day=None):
     tweets = load_tweets()
     filtered_tweets = []
 
-    # Get user preference (default to "all")
     user_preference = user_media_preferences.get(ctx.author.id, "all")
 
     for tweet in tweets:
@@ -77,7 +81,6 @@ def filter_tweets(ctx, username=None, year=None, month=None, day=None):
         tweet_username = tweet.get("user_handle", "")
         tweet_text = tweet.get("tweet_text", "")
 
-        # Filter media based on user preference
         if user_preference != "all":
             media = [clean_media_url(url) for url in tweet.get("tweet_media_urls", []) if url.lower().startswith("https") and url.lower().split("?")[0].endswith(user_preference)]
         else:
@@ -90,22 +93,23 @@ def filter_tweets(ctx, username=None, year=None, month=None, day=None):
             tweet_year = str(tweet_dt.year)
             tweet_month = str(tweet_dt.month).zfill(2)
             tweet_day = str(tweet_dt.day).zfill(2)
+            
+           
+            username_match = not username or username.lower() in tweet_username.lower()
+            year_match = not year or year == tweet_year
+            month_match = not month or month == tweet_month
+            day_match = not day or day == tweet_day
+                
+            if media and username_match and year_match and month_match and day_match:
+                filtered_tweets.append({
+                    "username": tweet_username,
+                    "created_at": tweet_time,
+                    "text": tweet_text,
+                    "media": media,
+                    "tweet_id": tweet_id
+                })
         except ValueError:
-            continue  # Skip if date parsing fails
-
-        if media and (
-            (not username or username.lower() in tweet_username.lower()) and
-            (not year or year == tweet_year) and
-            (not month or month == tweet_month) and
-            (not day or day == tweet_day)
-        ):
-            filtered_tweets.append({
-                "username": tweet_username,
-                "created_at": tweet_time,
-                "text": tweet_text,
-                "media": media,
-                "tweet_id": tweet_id
-            })
+            continue  
 
     return filtered_tweets
 
@@ -136,7 +140,7 @@ async def stop(ctx):
 @bot.command()
 async def ping(ctx):
     """Responds with Pong! and the bot's latency."""
-    latency = round(bot.latency * 1000)  # Convert to milliseconds
+    latency = round(bot.latency * 1000)  
     await ctx.send(f"Pong! 🏓 {latency}ms")
 
 @bot.command()
@@ -248,10 +252,10 @@ async def send_slideshow(ctx, filtered_tweets):
         return embed
 
     msg = await ctx.send(embed=generate_embed(current_index))
-    await msg.add_reaction("⏪")  # First page
-    await msg.add_reaction("⬅️")  # Previous page
-    await msg.add_reaction("➡️")  # Next page
-    await msg.add_reaction("⏩")  # Last page
+    await msg.add_reaction("⏪") 
+    await msg.add_reaction("⬅️")  
+    await msg.add_reaction("➡️")  
+    await msg.add_reaction("⏩")  
 
     def check_reaction(reaction, user):
         return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
@@ -265,15 +269,15 @@ async def send_slideshow(ctx, filtered_tweets):
             elif str(reaction.emoji) == "⬅️" and current_index > 0:
                 current_index -= 1
             elif str(reaction.emoji) == "⏪":
-                current_index = 0  # First page
+                current_index = 0  
             elif str(reaction.emoji) == "⏩":
-                current_index = tweet_count - 1  # Last page
+                current_index = tweet_count - 1  
 
             await msg.edit(embed=generate_embed(current_index))
             await msg.remove_reaction(reaction.emoji, user)
 
         except asyncio.TimeoutError:
-            break  # Auto-exit after 60 sec of no interaction
+            break 
 
 @bot.command()
 async def richcompile(ctx, *args):
@@ -384,15 +388,15 @@ async def send_rich_slideshow(ctx, filtered_tweets):
         embed.set_footer(text=f"{username_time} ({index + 1}/{tweet_count})")
 
         if tweet["media"]:
-            embed.set_image(url=tweet["media"][0])  # First image/video in slideshow
+            embed.set_image(url=tweet["media"][0])  
 
         return embed
 
     msg = await ctx.send(embed=generate_embed(current_index))
-    await msg.add_reaction("⏪")  # First page
-    await msg.add_reaction("⬅️")  # Previous page
-    await msg.add_reaction("➡️")  # Next page
-    await msg.add_reaction("⏩")  # Last page
+    await msg.add_reaction("⏪")  
+    await msg.add_reaction("⬅️")  
+    await msg.add_reaction("➡️")  
+    await msg.add_reaction("⏩")  
 
     def check_reaction(reaction, user):
         return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
@@ -406,15 +410,15 @@ async def send_rich_slideshow(ctx, filtered_tweets):
             elif str(reaction.emoji) == "⬅️" and current_index > 0:
                 current_index -= 1
             elif str(reaction.emoji) == "⏪":
-                current_index = 0  # First page
+                current_index = 0  
             elif str(reaction.emoji) == "⏩":
-                current_index = tweet_count - 1  # Last page
+                current_index = tweet_count - 1  
 
             await msg.edit(embed=generate_embed(current_index))
             await msg.remove_reaction(reaction.emoji, user)
 
         except asyncio.TimeoutError:
-            break  # Auto-exit after 60 sec of no interaction
+            break  
 
 
 @bot.command()
@@ -468,10 +472,10 @@ async def stats(ctx, *args):
             msg = await ctx.send(embed=generate_embed(current_page))
 
             # Add reaction buttons for pagination
-            await msg.add_reaction("⏪")  # First page
-            await msg.add_reaction("⬅️")  # Previous page
-            await msg.add_reaction("➡️")  # Next page
-            await msg.add_reaction("⏩")  # Last page
+            await msg.add_reaction("⏪")  
+            await msg.add_reaction("⬅️")  
+            await msg.add_reaction("➡️")  
+            await msg.add_reaction("⏩")  
 
             def check_reaction(reaction, user):
                 return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
@@ -485,15 +489,15 @@ async def stats(ctx, *args):
                     elif str(reaction.emoji) == "⬅️" and current_page > 0:
                         current_page -= 1
                     elif str(reaction.emoji) == "⏪":
-                        current_page = 0  # First page
+                        current_page = 0  
                     elif str(reaction.emoji) == "⏩":
-                        current_page = total_pages - 1  # Last page
+                        current_page = total_pages - 1  
 
                     await msg.edit(embed=generate_embed(current_page))
                     await msg.remove_reaction(reaction.emoji, user)  # Remove reaction after use
 
                 except asyncio.TimeoutError:
-                    break  # Exit loop after timeout
+                    break  
 
             return
 
@@ -562,7 +566,6 @@ async def game(ctx):
     embed.set_image(url=image_url)
     msg = await ctx.send(embed=embed)
 
-    # Add the shrug emoji reaction
     shrug_emoji = "🤷"
     await msg.add_reaction(shrug_emoji)
 
@@ -609,13 +612,13 @@ async def game(ctx):
                 else:
                     like_count = sum(1 for t in tweets if t["user_handle"] == username)
                     await ctx.send(f"**Hint:** You have liked this Tweeter **{like_count} times**.")
-                continue  # Keep waiting for a guess
+                continue  
 
 
             if hint_2_task in done and not hint_2_given:
                 hint_2_given = True
                 await ctx.send(f"**Hint:** The username starts with **{username[0].upper()}** and ends with **{username[-1].upper()}**!")
-                continue  # Keep waiting for a guess
+                continue 
 
             if timeout_task in done:
                 await ctx.send(f"⏳ **Time's up!** The correct answer was **{username}**.\n-# Type `.game` to play again!")
