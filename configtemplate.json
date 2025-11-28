@@ -1,5 +1,8 @@
 {
-    "TOKEN": "YOUR_BOT_TOKEN_HERE",
-    "JSON_FILE": "JSON_FILE_HERE"
-  }
-  
+  "TOKEN": "YOUR_BOT_TOKEN_HERE",
+  "JSON_FILE": {
+    "profile1": "/path/to/user1/liked_tweets.json",
+    "profile2": "/path/to/user2/liked_tweets.json"
+  },
+  "SELECTED_PROFILE": "profile1"
+}

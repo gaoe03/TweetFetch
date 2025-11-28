@@ -6,32 +6,197 @@ import calendar
 import urllib.parse
 import collections
 import random
+import os
 from discord.ext import commands
 
-# Load config
-with open("config.json", "r") as f:
-    config = json.load(f)
+# Folder discovery and validation
+USERS_BASE_PATH = "/Users/gaoe/Downloads/projects/LikedTweets/users/"
+
+def discover_user_folders():
+    """Scan for available user folders containing liked_tweets.json"""
+    if not os.path.exists(USERS_BASE_PATH):
+        print(f"❌ Users directory not found: {USERS_BASE_PATH}")
+        return {}
+    
+    user_folders = {}
+    try:
+        for folder_name in os.listdir(USERS_BASE_PATH):
+            folder_path = os.path.join(USERS_BASE_PATH, folder_name)
+            if os.path.isdir(folder_path):
+                json_path = os.path.join(folder_path, "liked_tweets.json")
+                if os.path.exists(json_path):
+                    user_folders[folder_name] = json_path
+    except Exception as e:
+        print(f"❌ Error scanning user folders: {e}")
+    
+    return user_folders
+
+def prompt_user_selection(available_folders):
+    """Prompt user to select which folder/profile to use"""
+    if not available_folders:
+        print("❌ No user folders found with liked_tweets.json!")
+        return None
+    
+    print("\n" + "="*50)
+    print("📁 Available User Profiles:")
+    print("="*50)
+    
+    folder_list = sorted(available_folders.keys())
+    for idx, folder_name in enumerate(folder_list, 1):
+        print(f"  {idx}. {folder_name}")
+    
+    print("="*50)
+    
+    while True:
+        try:
+            choice = input(f"\nSelect a profile (1-{len(folder_list)}): ").strip()
+            choice_idx = int(choice) - 1
+            
+            if 0 <= choice_idx < len(folder_list):
+                selected_folder = folder_list[choice_idx]
+                print(f"✅ Selected: {selected_folder}\n")
+                return selected_folder
+            else:
+                print(f"❌ Invalid choice. Please enter a number between 1 and {len(folder_list)}.")
+        except (ValueError, KeyboardInterrupt):
+            print("\n❌ Invalid input. Exiting.")
+            exit()
+
+def validate_and_update_config():
+    """Always prompt user to select profile on startup"""
+    config_path = "config.json"
+    
+    # Load existing config or create new one
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            config = json.load(f)
+    else:
+        print("⚠️  config.json not found! Creating new config...")
+        config = {"TOKEN": "YOUR_BOT_TOKEN_HERE"}
+    
+    # Discover available folders
+    available_folders = discover_user_folders()
+    
+    if not available_folders:
+        print("❌ No user folders found! Please check your folder structure.")
+        exit()
+    
+    # Always prompt for selection
+    selected_folder = prompt_user_selection(available_folders)
+    if not selected_folder:
+        exit()
+    
+    # Build profiles dict from all available folders
+    profiles = available_folders
+    
+    # Update config
+    config["JSON_FILE"] = profiles
+    config["SELECTED_PROFILE"] = selected_folder
+    
+    # Save updated config
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=4)
+    
+    print(f"✅ Config updated!")
+    
+    return config
+
+# Load and validate config
+config = validate_and_update_config()
 
 TOKEN = config["TOKEN"]
-JSON_FILE = config["JSON_FILE"]
+# Support both string (legacy) and dict (profiles) for JSON_FILE
+DEFAULT_JSON_FILE = config["JSON_FILE"]
+
+# Determine active profile from config or use default
+if "SELECTED_PROFILE" in config and isinstance(DEFAULT_JSON_FILE, dict):
+    ACTIVE_PROFILE = config["SELECTED_PROFILE"]
+else:
+    ACTIVE_PROFILE = "default"
+
+# Build PROFILES dict
+PROFILES = {"default": DEFAULT_JSON_FILE} if isinstance(DEFAULT_JSON_FILE, str) else DEFAULT_JSON_FILE
+CURRENT_JSON_PATH = PROFILES.get(ACTIVE_PROFILE, list(PROFILES.values())[0] if PROFILES else None)
+
+if not CURRENT_JSON_PATH or not os.path.exists(CURRENT_JSON_PATH):
+    print(f"❌ Error: Selected profile '{ACTIVE_PROFILE}' path not found: {CURRENT_JSON_PATH}")
+    exit()
+
+print(f"🚀 Starting bot with profile: {ACTIVE_PROFILE}")
+print(f"📂 Using JSON file: {CURRENT_JSON_PATH}\n")
+
+# Global Cache
+TWEET_CACHE = []
+CACHE_TIMESTAMP = None
+
 
 # Set up bot
 intents = discord.Intents.default()
 intents.message_content = True  # Enables message content intent
 bot = commands.Bot(command_prefix=".", intents=intents)
+bot.remove_command("help") # Remove default help
 
 abort_flag = {}
 
 MONTH_MAP = {m.lower(): str(i).zfill(2) for i, m in enumerate(calendar.month_name) if m}
 MONTH_ABBR_MAP = {m.lower(): str(i).zfill(2) for i, m in enumerate(calendar.month_abbr) if m}
 
-user_media_preferences = {}  # Stores user preferences (jpg, mp4, etc)
 
-def load_tweets():
-    """Load tweets from JSON file."""
+USER_PREFS_FILE = "user_prefs.json"
+
+def load_user_prefs():
+    if os.path.exists(USER_PREFS_FILE):
+        try:
+            with open(USER_PREFS_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading user prefs: {e}")
+    return {}
+
+def save_user_prefs():
     try:
-        with open(JSON_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(USER_PREFS_FILE, "w") as f:
+            json.dump(user_media_preferences, f)
+    except Exception as e:
+        print(f"Error saving user prefs: {e}")
+
+user_media_preferences = load_user_prefs()  # Stores user preferences (jpg, mp4, etc)
+
+def parse_tweet_date(tweet):
+    """Helper to parse date from tweet and add structured fields."""
+    try:
+        tweet_time = tweet.get("tweet_created_at", "")
+        tweet_dt = datetime.datetime.strptime(tweet_time, "%a %b %d %H:%M:%S %z %Y")
+        tweet["parsed_year"] = str(tweet_dt.year)
+        tweet["parsed_month"] = str(tweet_dt.month).zfill(2)
+        tweet["parsed_day"] = str(tweet_dt.day).zfill(2)
+        tweet["parsed_dt"] = tweet_dt # Store datetime object for sorting/formatting if needed
+        return True
+    except ValueError:
+        return False
+
+def load_tweets(force_reload=False):
+    """Load tweets from JSON file with caching."""
+    global TWEET_CACHE, CACHE_TIMESTAMP
+    
+    if not force_reload and TWEET_CACHE:
+        return TWEET_CACHE
+
+    print(f"Loading tweets from {CURRENT_JSON_PATH}...")
+    try:
+        with open(CURRENT_JSON_PATH, "r", encoding="utf-8") as f:
+            tweets = json.load(f)
+            
+        # Pre-process tweets
+        valid_tweets = []
+        for tweet in tweets:
+            if parse_tweet_date(tweet):
+                valid_tweets.append(tweet)
+        
+        TWEET_CACHE = valid_tweets
+        CACHE_TIMESTAMP = datetime.datetime.now()
+        print(f"Loaded {len(TWEET_CACHE)} tweets.")
+        return TWEET_CACHE
     except Exception as e:
         print(f"Error loading JSON: {e}")
         return []
@@ -70,12 +235,16 @@ def filter_tweets(ctx, username=None, year=None, month=None, day=None):
     filtered_tweets = []
 
     # Get user preference (default to "all")
-    user_preference = user_media_preferences.get(ctx.author.id, "all")
+    user_preference = user_media_preferences.get(str(ctx.author.id), "all") # Ensure ID is string for JSON compatibility
 
     for tweet in tweets:
-        tweet_time = tweet.get("tweet_created_at", "")
         tweet_username = tweet.get("user_handle", "")
-        tweet_text = tweet.get("tweet_text", "")
+        tweet_text = tweet.get("tweet_content", "")
+        
+        # Use pre-parsed dates
+        tweet_year = tweet.get("parsed_year")
+        tweet_month = tweet.get("parsed_month")
+        tweet_day = tweet.get("parsed_day")
 
         # Filter media based on user preference
         if user_preference != "all":
@@ -85,14 +254,6 @@ def filter_tweets(ctx, username=None, year=None, month=None, day=None):
 
         tweet_id = tweet.get("tweet_id", "")
 
-        try:
-            tweet_dt = datetime.datetime.strptime(tweet_time, "%a %b %d %H:%M:%S %z %Y")
-            tweet_year = str(tweet_dt.year)
-            tweet_month = str(tweet_dt.month).zfill(2)
-            tweet_day = str(tweet_dt.day).zfill(2)
-        except ValueError:
-            continue  # Skip if date parsing fails
-
         if media and (
             (not username or username.lower() in tweet_username.lower()) and
             (not year or year == tweet_year) and
@@ -101,7 +262,7 @@ def filter_tweets(ctx, username=None, year=None, month=None, day=None):
         ):
             filtered_tweets.append({
                 "username": tweet_username,
-                "created_at": tweet_time,
+                "created_at": tweet.get("tweet_created_at", ""),
                 "text": tweet_text,
                 "media": media,
                 "tweet_id": tweet_id
@@ -119,8 +280,33 @@ async def set(ctx, media_type: str = None):
         await ctx.send("Invalid media type. Choose from: `all`, `mp4`, `jpg`, `png`.")
         return
 
-    user_media_preferences[ctx.author.id] = media_type.lower()
+    user_media_preferences[str(ctx.author.id)] = media_type.lower() # Store as string key
+    save_user_prefs()
     await ctx.send(f"✅ **Preference set!** Now only fetching `{media_type.upper()}` files for `.compile` and `.richcompile`.")
+
+@bot.command()
+async def reload(ctx):
+    """Reloads the tweets from the JSON file."""
+    load_tweets(force_reload=True)
+    await ctx.send(f"✅ **Reloaded!** Currently using profile: `{ACTIVE_PROFILE}` ({len(TWEET_CACHE)} tweets).")
+
+@bot.command()
+async def profile(ctx, profile_name: str = None):
+    """Switches the active tweet profile (JSON file)."""
+    global CURRENT_JSON_PATH, ACTIVE_PROFILE
+    
+    if not profile_name:
+        await ctx.send(f"Current profile: `{ACTIVE_PROFILE}`\nPath: `{CURRENT_JSON_PATH}`\nAvailable profiles: {', '.join(PROFILES.keys())}")
+        return
+
+    if profile_name not in PROFILES:
+        await ctx.send(f"❌ Profile `{profile_name}` not found. Available: {', '.join(PROFILES.keys())}")
+        return
+
+    ACTIVE_PROFILE = profile_name
+    CURRENT_JSON_PATH = PROFILES[profile_name]
+    load_tweets(force_reload=True)
+    await ctx.send(f"✅ Switched to profile `{profile_name}`! Loaded {len(TWEET_CACHE)} tweets.")
 
 
 @bot.command()
@@ -152,39 +338,102 @@ async def compile(ctx, *args):
         return
 
     total_results = sum(len(tweet["media"]) for tweet in filtered_tweets)
-    await ctx.send(
-        f"Found **{total_results}** media results. Choose an option:\n"
-        "-# 1. **Slideshow**\n"
-        "-# 2. **All at once**\n"
-        "-# 3. **Exit**"
-    )
+    
+    view = MenuView(ctx, filtered_tweets, mode="normal")
+    await ctx.send(f"Found **{total_results}** media results. Choose an option:", view=view)
 
-    def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel and m.content in ["1", "2", "3"]
+class MenuView(discord.ui.View):
+    def __init__(self, ctx, filtered_tweets, mode="normal"):
+        super().__init__(timeout=30)
+        self.ctx = ctx
+        self.filtered_tweets = filtered_tweets
+        self.mode = mode
+        self.value = None
 
-    try:
-        msg = await bot.wait_for("message", timeout=30.0, check=check)
-        choice = msg.content
+    @discord.ui.button(label="Slideshow", style=discord.ButtonStyle.primary, emoji="🎞️")
+    async def slideshow(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author:
+            return await interaction.response.send_message("This isn't your menu!", ephemeral=True)
+        
+        # Remove buttons immediately
+        await interaction.response.edit_message(view=None)
+        
+        if self.mode == "normal":
+            await send_slideshow(self.ctx, self.filtered_tweets)
+        else:
+            await send_rich_slideshow(self.ctx, self.filtered_tweets)
+        self.stop()
 
-        if choice == "3":
-            abort_flag[ctx.author.id] = True
-            await ctx.send("Cancelled.")
-            return
-        elif choice not in ["1", "2"]:
-            await ctx.send("Invalid option. Please respond with `1`, `2`, or `3`.")
-            msg = await bot.wait_for("message", timeout=15.0, check=check)
-            if msg.content not in ["1", "2"]:
-                await ctx.send("Invalid response again. Cancelling.")
-                return
-            choice = msg.content  
-    except asyncio.TimeoutError:
-        await ctx.send("Timed out. Try again.")
-        return
+    @discord.ui.button(label="All at once", style=discord.ButtonStyle.secondary, emoji="📂")
+    async def all_at_once(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author:
+            return await interaction.response.send_message("This isn't your menu!", ephemeral=True)
 
-    if choice == "1":
-        await send_slideshow(ctx, filtered_tweets)
-    elif choice == "2":
-        await send_all(ctx, filtered_tweets)
+        # Remove buttons immediately
+        await interaction.response.edit_message(view=None)
+
+        if self.mode == "normal":
+            await send_all(self.ctx, self.filtered_tweets)
+        else:
+            await send_rich_all(self.ctx, self.filtered_tweets)
+        self.stop()
+
+    @discord.ui.button(label="Exit", style=discord.ButtonStyle.danger, emoji="✖️")
+    async def exit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author:
+            return await interaction.response.send_message("This isn't your menu!", ephemeral=True)
+        
+        await interaction.response.send_message("Cancelled.", ephemeral=True)
+        self.stop()
+
+class PaginationView(discord.ui.View):
+    def __init__(self, ctx, data, embed_factory, total_pages):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.data = data
+        self.embed_factory = embed_factory
+        self.total_pages = total_pages
+        self.current_page = 0
+        self.message = None
+
+    async def update_view(self, interaction):
+        embed = self.embed_factory(self.current_page)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="<<", style=discord.ButtonStyle.grey)
+    async def first_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author: return
+        self.current_page = 0
+        await self.update_view(interaction)
+
+    @discord.ui.button(label="<", style=discord.ButtonStyle.primary)
+    async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author: return
+        if self.current_page > 0:
+            self.current_page -= 1
+            await self.update_view(interaction)
+
+    @discord.ui.button(label=">", style=discord.ButtonStyle.primary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author: return
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            await self.update_view(interaction)
+
+    @discord.ui.button(label=">>", style=discord.ButtonStyle.grey)
+    async def last_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author: return
+        self.current_page = self.total_pages - 1
+        await self.update_view(interaction)
+
+    @discord.ui.button(label="Stop", style=discord.ButtonStyle.danger)
+    async def stop_view(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.ctx.author: return
+        self.stop()
+        # Remove buttons but keep the message (freeze state)
+        await interaction.response.edit_message(view=None)
+
+
 
 async def send_all(ctx, filtered_tweets):
     """Sends all media results at once."""
@@ -232,8 +481,7 @@ async def send_all(ctx, filtered_tweets):
 
 
 async def send_slideshow(ctx, filtered_tweets):
-    """Displays tweets in a slideshow format with reaction navigation."""
-    current_index = 0
+    """Displays tweets in a slideshow format with button navigation."""
     tweet_count = len(filtered_tweets)
 
     def generate_embed(index):
@@ -244,36 +492,10 @@ async def send_slideshow(ctx, filtered_tweets):
         if tweet["media"]:
             embed.set_image(url=tweet["media"][0])
         embed.set_footer(text=f"{username_time} ({index + 1}/{tweet_count})")
-
         return embed
 
-    msg = await ctx.send(embed=generate_embed(current_index))
-    await msg.add_reaction("⏪")  # First page
-    await msg.add_reaction("⬅️")  # Previous page
-    await msg.add_reaction("➡️")  # Next page
-    await msg.add_reaction("⏩")  # Last page
-
-    def check_reaction(reaction, user):
-        return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
-
-    while True:
-        try:
-            reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check_reaction)
-
-            if str(reaction.emoji) == "➡️" and current_index < tweet_count - 1:
-                current_index += 1
-            elif str(reaction.emoji) == "⬅️" and current_index > 0:
-                current_index -= 1
-            elif str(reaction.emoji) == "⏪":
-                current_index = 0  # First page
-            elif str(reaction.emoji) == "⏩":
-                current_index = tweet_count - 1  # Last page
-
-            await msg.edit(embed=generate_embed(current_index))
-            await msg.remove_reaction(reaction.emoji, user)
-
-        except asyncio.TimeoutError:
-            break  # Auto-exit after 60 sec of no interaction
+    view = PaginationView(ctx, filtered_tweets, generate_embed, tweet_count)
+    view.message = await ctx.send(embed=generate_embed(0), view=view)
 
 @bot.command()
 async def richcompile(ctx, *args):
@@ -287,39 +509,7 @@ async def richcompile(ctx, *args):
         await ctx.send("No matching tweets found.")
         return
 
-    await ctx.send(
-        f"Found **{len(filtered_tweets)}** tweets. Choose an option:\n"
-        "-# 1. **Slideshow**\n"
-        "-# 2. **All at once**\n"
-        "-# 3. **Exit**"
-    )
-
-    def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel and m.content in ["1", "2", "3"]
-
-    try:
-        msg = await bot.wait_for("message", timeout=30.0, check=check)
-        choice = msg.content
-
-        if choice == "3":
-            abort_flag[ctx.author.id] = True
-            await ctx.send("Cancelled.")
-            return
-        elif choice not in ["1", "2"]:
-            await ctx.send("Invalid option. Please respond with `1`, `2`, or `3`.")
-            msg = await bot.wait_for("message", timeout=15.0, check=check)
-            if msg.content not in ["1", "2"]:
-                await ctx.send("Invalid response again. Cancelling.")
-                return
-            choice = msg.content  
-    except asyncio.TimeoutError:
-        await ctx.send("Timed out. Try again.")
-        return
-
-    if choice == "1":
-        await send_rich_slideshow(ctx, filtered_tweets)
-    elif choice == "2":
-        await send_rich_all(ctx, filtered_tweets)
+    await ctx.send(f"Found **{len(filtered_tweets)}** tweets. Choose an option:", view=MenuView(ctx, filtered_tweets, mode="rich"))
 
 async def send_rich_all(ctx, filtered_tweets):
     """Displays all tweets with full details at once."""
@@ -369,8 +559,7 @@ async def send_rich_all(ctx, filtered_tweets):
     await ctx.send("Finished sending all tweets! ✅")
 
 async def send_rich_slideshow(ctx, filtered_tweets):
-    """Displays tweets in a rich slideshow format with reaction navigation."""
-    current_index = 0
+    """Displays tweets in a rich slideshow format with button navigation."""
     tweet_count = len(filtered_tweets)
 
     def generate_embed(index):
@@ -388,33 +577,8 @@ async def send_rich_slideshow(ctx, filtered_tweets):
 
         return embed
 
-    msg = await ctx.send(embed=generate_embed(current_index))
-    await msg.add_reaction("⏪")  # First page
-    await msg.add_reaction("⬅️")  # Previous page
-    await msg.add_reaction("➡️")  # Next page
-    await msg.add_reaction("⏩")  # Last page
-
-    def check_reaction(reaction, user):
-        return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
-
-    while True:
-        try:
-            reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check_reaction)
-
-            if str(reaction.emoji) == "➡️" and current_index < tweet_count - 1:
-                current_index += 1
-            elif str(reaction.emoji) == "⬅️" and current_index > 0:
-                current_index -= 1
-            elif str(reaction.emoji) == "⏪":
-                current_index = 0  # First page
-            elif str(reaction.emoji) == "⏩":
-                current_index = tweet_count - 1  # Last page
-
-            await msg.edit(embed=generate_embed(current_index))
-            await msg.remove_reaction(reaction.emoji, user)
-
-        except asyncio.TimeoutError:
-            break  # Auto-exit after 60 sec of no interaction
+    view = PaginationView(ctx, filtered_tweets, generate_embed, tweet_count)
+    view.message = await ctx.send(embed=generate_embed(0), view=view)
 
 
 @bot.command()
@@ -436,7 +600,7 @@ async def stats(ctx, *args):
     top_users = user_counts.most_common()
 
     # Longest Tweet Liked
-    longest_tweet = max(tweets, key=lambda t: len(t["tweet_text"]), default=None)
+    longest_tweet = max(tweets, key=lambda t: len(t.get("tweet_content", "")), default=None)
 
     # If a specific stat is requested
     if args:
@@ -464,37 +628,8 @@ async def stats(ctx, *args):
                 embed.set_footer(text=f"Page {page + 1}/{total_pages}")
                 return embed
 
-            # Send initial embed
-            msg = await ctx.send(embed=generate_embed(current_page))
-
-            # Add reaction buttons for pagination
-            await msg.add_reaction("⏪")  # First page
-            await msg.add_reaction("⬅️")  # Previous page
-            await msg.add_reaction("➡️")  # Next page
-            await msg.add_reaction("⏩")  # Last page
-
-            def check_reaction(reaction, user):
-                return user == ctx.author and reaction.message.id == msg.id and str(reaction.emoji) in ["⬅️", "➡️", "⏪", "⏩"]
-
-            while True:
-                try:
-                    reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check_reaction)
-
-                    if str(reaction.emoji) == "➡️" and current_page < total_pages - 1:
-                        current_page += 1
-                    elif str(reaction.emoji) == "⬅️" and current_page > 0:
-                        current_page -= 1
-                    elif str(reaction.emoji) == "⏪":
-                        current_page = 0  # First page
-                    elif str(reaction.emoji) == "⏩":
-                        current_page = total_pages - 1  # Last page
-
-                    await msg.edit(embed=generate_embed(current_page))
-                    await msg.remove_reaction(reaction.emoji, user)  # Remove reaction after use
-
-                except asyncio.TimeoutError:
-                    break  # Exit loop after timeout
-
+            view = PaginationView(ctx, top_users, generate_embed, total_pages)
+            view.message = await ctx.send(embed=generate_embed(0), view=view)
             return
 
         elif stat_type == "media":
@@ -505,9 +640,9 @@ async def stats(ctx, *args):
             return
 
         elif stat_type == "longest":
-            embed = discord.Embed(title="📜 Longest Tweet Liked", description=longest_tweet["tweet_text"], color=discord.Color.blue())
+            embed = discord.Embed(title="📜 Longest Tweet Liked", description=longest_tweet.get("tweet_content", ""), color=discord.Color.blue())
             embed.set_author(name=longest_tweet["user_handle"], url=f"https://twitter.com/{longest_tweet['user_handle']}/status/{longest_tweet['tweet_id']}")
-            embed.set_footer(text=f"Length: {len(longest_tweet['tweet_text'])} characters")
+            embed.set_footer(text=f"Length: {len(longest_tweet.get('tweet_content', ''))} characters")
             await ctx.send(embed=embed)
             return
 
@@ -638,5 +773,46 @@ async def game(ctx):
         await ctx.send(f"⏳ **Time's up!** The correct answer was **{username}**.\n -# Type `.game` to play again!")
     finally:
         game_in_progress[ctx.channel.id] = False  # Ensure game flag is reset if anything goes wrong
+
+@bot.command(name="help")
+async def help_command(ctx):
+    """Displays the custom help embed."""
+    embed = discord.Embed(title="🤖 TweetFetch Bot Help", description="Here are the available commands:", color=discord.Color.blue())
+
+    # Search Commands
+    embed.add_field(
+        name="🔎 Search & View",
+        value=(
+            "`.compile [user] [date]` - Fetch media (slideshow/all).\n"
+            "`.richcompile [user] [date]` - Fetch full tweets with text.\n"
+            "`.stats [type]` - View stats (`top_users`, `media`, `longest`)."
+        ),
+        inline=False
+    )
+
+    # Settings Commands
+    embed.add_field(
+        name="⚙️ Settings",
+        value=(
+            "`.set [type]` - Set media preference (`all`, `mp4`, `jpg`).\n"
+            "`.profile [name]` - Switch tweet database profile.\n"
+            "`.reload` - Reload tweets from the file."
+        ),
+        inline=False
+    )
+
+    # Misc Commands
+    embed.add_field(
+        name="🎲 Fun & Misc",
+        value=(
+            "`.game` - Guess the Tweeter from an image.\n"
+            "`.ping` - Check bot latency.\n"
+            "`.stop` - Stop the current process."
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text="Use .compile without args to see everything!")
+    await ctx.send(embed=embed)
 
 bot.run(TOKEN)
